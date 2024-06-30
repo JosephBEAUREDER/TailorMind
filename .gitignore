@@ -16,8 +16,6 @@ dist/
 *.pyc
 *.pyo
 *.pyd
-*.sqlite3
-db.sqlite3
 
 # Jupyter Notebook Checkpoints
 .ipynb_checkpoints/
