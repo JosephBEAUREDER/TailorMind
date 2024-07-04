@@ -3,16 +3,21 @@ from django.http import HttpResponse, JsonResponse
 from django.contrib.auth import login, authenticate, logout
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.contrib.auth.decorators import login_required
-import json
+from django.views.decorators.http import require_POST
+from django.conf import settings
+
 from .forms import TexteForm
 
 import os
-from django.http import JsonResponse
-from django.views.decorators.http import require_POST
-from django.conf import settings
+import json
+import logging
+
+from dotenv import load_dotenv
+
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_openai import OpenAIEmbeddings
+# from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain_openai import OpenAI
@@ -116,7 +121,8 @@ def save_texte(request):
             
             try:
                 # Add the new Texte to the user's ChromaDB database
-                add_texte_to_db(request.user, texte)
+                # add_texte_to_db(request.user, texte)
+                create_and_persist_db(request.user)
                 return JsonResponse({'success': True, 'message': f'Added the text "{texte.title}" to the database'})
             except Exception as e:
                 # If there's an error adding to ChromaDB, we should handle it
@@ -139,19 +145,50 @@ def add_texte_to_db(user, texte):
         # If it doesn't exist, create it
         create_empty_db(user)
     
-    # Prepare the document
-    doc = Document(page_content=texte.text, metadata={"title": texte.title})
+    # Create a text splitter
+    text_splitter = CharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len
+    )
+    
+    # Split the text into chunks
+    chunks = text_splitter.split_text(texte.text)
+    
+    # Create documents from chunks
+    docs = [
+        Document(page_content=chunk, metadata={"title": texte.title, "chunk_index": i})
+        for i, chunk in enumerate(chunks)
+    ]
 
     # Load the existing database
     embeddings = OpenAIEmbeddings()
     vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
-    # Add the new document
-    vectorstore.add_documents([doc])
+    # Add the new documents
+    vectorstore.add_documents(docs)
 
     # Persist the changes
     vectorstore.persist()
+    
+    
+def create_and_persist_db(user):
+    """Create and persist a Chroma vector store for a specific user."""
+    persist_directory = get_user_db_path(user)
+    os.makedirs(persist_directory, exist_ok=True)
 
+    # Load and process the documents
+    document_path = os.path.join(settings.BASE_DIR, 'documents', 'Bouveresse.txt')
+    loader = TextLoader(document_path, encoding='utf-8')
+    documents = loader.load()
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
+    texts = text_splitter.split_documents(documents)
+
+    # Create the vector store
+    embeddings = OpenAIEmbeddings()
+    vectorstore = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
+    vectorstore.persist()
+    return persist_directory
 
 @login_required
 def check_user_db(request):
@@ -166,39 +203,62 @@ def check_user_db(request):
     
 
 ############# QUERY RAG #############
+# Load environment variables from .env file
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
 @login_required
 @require_POST
 def query_rag(request):
     user = request.user
-    data = json.loads(request.body)
-    query = data.get('query')
-
-    if not query:
-        return JsonResponse({'error': 'No query provided'}, status=400)
-
     try:
+        # Get the OpenAI API key from environment variables
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            logger.error("OPENAI_API_KEY not found in environment variables")
+            return JsonResponse({'error': 'OpenAI API key not configured'}, status=500)
+
+        data = json.loads(request.body)
+        query = data.get('query')
+
+        if not query:
+            logger.warning(f"No query provided for user {user.username}")
+            return JsonResponse({'error': 'No query provided'}, status=400)
+
+        logger.info(f"Processing query for user {user.username}: {query[:50]}...")
+
         # Get the user's database path
         db_path = get_user_db_path(user)
+        logger.info(f"Database path for user {user.username}: {db_path}")
 
         # Check if the database exists
         if not os.path.exists(db_path):
+            logger.error(f"No database found for user {user.username} at path {db_path}")
             return JsonResponse({'error': 'No database found for this user'}, status=404)
 
         # Load the persisted database
-        embeddings = OpenAIEmbeddings()
+        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
         vectorstore = Chroma(persist_directory=db_path, embedding_function=embeddings)
+        logger.info(f"Loaded vector store for user {user.username}")
 
         # Create the RAG chain
         qa = RetrievalQA.from_chain_type(
-            llm=OpenAI(),
+            llm=OpenAI(openai_api_key=openai_api_key),
             chain_type="stuff",
             retriever=vectorstore.as_retriever()
         )
+        logger.info(f"Created RAG chain for user {user.username}")
 
         # Query the RAG system
         result = qa.invoke(query)
+        logger.info(f"Obtained result for user {user.username}")
 
         return JsonResponse({'result': result['result']})
 
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error for user {user.username}: {str(e)}")
+        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
     except Exception as e:
+        logger.error(f"Error processing query for user {user.username}: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
