@@ -6,19 +6,46 @@ from django.contrib.auth.decorators import login_required
 import json
 from .forms import TexteForm
 
+import os
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
+from django.conf import settings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import TextLoader
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain.chains import RetrievalQA
+from langchain_openai import OpenAI
+from langchain.schema import Document
+
 def home(request):
     return render(request,'home.html')
     
+
+
+
+################################
+# REGISTER / LOGIN / LOGOUT
+################################
+
 def register(request):
     if request.method == 'POST':
         form = UserCreationForm(request.POST)
         if form.is_valid():
             user = form.save()
-            login(request, user)
-            return redirect('home')  # Redirect to a home page or any other page after registration
+            # Create an empty database for the new user
+            db_creation_response = create_empty_db(user)
+            if db_creation_response.status_code == 200:
+                login(request, user)
+                return redirect('home')  # Redirect to a home page or any other page after registration
+            else:
+                # If database creation failed, delete the user and return an error
+                user.delete()
+                return render(request, 'register.html', {'form': form, 'error': db_creation_response.content})
     else:
         form = UserCreationForm()
     return render(request, 'register.html', {'form': form})
+
 
 def login_view(request):
     if request.method == 'POST':
@@ -34,12 +61,48 @@ def login_view(request):
         form = AuthenticationForm()
     return render(request, 'login.html', {'form': form})
 
+
 def logout_view(request):
     if request.method == 'POST':
         logout(request)
         return redirect('login')  # Redirect to the login page after logout
     return render(request, 'logout.html')
 
+
+
+################################
+# OPEN_AI RAG
+################################
+
+
+def get_user_db_path(user):
+    """Generate a unique path for each user's vector store."""
+    return os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}')
+
+
+############ CREATE EMPTY DATABASE #############
+
+def create_empty_db(user):
+    """Create an empty Chroma vector store for a specific user."""
+    try:
+        persist_directory = get_user_db_path(user)
+        os.makedirs(persist_directory, exist_ok=True)
+        
+        # Create an empty vector store
+        embeddings = OpenAIEmbeddings()
+        vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        
+        return JsonResponse({
+            'message': f'Chroma database created successfully for user {user.username}',
+            'path': persist_directory
+        })
+    except Exception as e:
+        return JsonResponse({
+            'message': f'Error creating database: {str(e)}',
+        }, status=500)
+    
+
+############ ADD TEXT TO DATABASE #############
 
 @login_required
 def save_texte(request):
@@ -50,114 +113,45 @@ def save_texte(request):
             texte = form.save(commit=False)
             texte.user = request.user
             texte.save()
-            return JsonResponse({'success': True})
-    return JsonResponse({'success': False})
-
-
-
-################################
-# OPEN_AI RAG
-
-# import os
-# from django.http import JsonResponse
-# from django.views.decorators.http import require_POST
-# from django.contrib.auth.decorators import login_required
-# from django.conf import settings
-
-
-# @login_required
-# @require_POST
-# def create_user_db(request):
-#     user = request.user
-#     db_path = os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}')
+            
+            try:
+                # Add the new Texte to the user's ChromaDB database
+                add_texte_to_db(request.user, texte)
+                return JsonResponse({'success': True, 'message': f'Added the text "{texte.title}" to the database'})
+            except Exception as e:
+                # If there's an error adding to ChromaDB, we should handle it
+                return JsonResponse({'success': False, 'message': f'Error adding "{texte.title}" to the database: {str(e)}'}, status=500)
+        else:
+            # If the form is not valid, return the form errors
+            return JsonResponse({'success': False, 'message': 'Form validation failed', 'errors': form.errors}, status=400)
     
-#     try:
-#         os.makedirs(db_path, exist_ok=True)
-        
-#         # Here, you would call your create_and_persist_db function
-#         # For this example, we'll just create a dummy file to simulate database creation
-#         with open(os.path.join(db_path, 'db_created.txt'), 'w') as f:
-#             f.write('Database created')
-        
-#         return JsonResponse({
-#             'message': f'Database created successfully for user {user.username}',
-#             'path': db_path
-#         })
-#     except Exception as e:
-#         return JsonResponse({
-#             'message': f'Error creating database: {str(e)}',
-#         }, status=500)
-        
-
-# @login_required
-# def check_user_db(request):
-#     user = request.user
-#     db_path = os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}')
-#     db_exists = os.path.exists(db_path) and os.path.isfile(os.path.join(db_path, 'db_created.txt'))
-    
-#     return JsonResponse({
-#         'database_exists': db_exists,
-#         'path': db_path if db_exists else None
-#     })
+    # If the request method is not POST
+    return JsonResponse({'success': False, 'message': 'Invalid request method'}, status=405)
 
 
 
-
-
-
-
-
-import os
-from django.http import JsonResponse
-from django.views.decorators.http import require_POST
-from django.contrib.auth.decorators import login_required
-from django.conf import settings
-from langchain.document_loaders import TextLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.chains import RetrievalQA
-from langchain_openai import OpenAI
-
-# # Make sure to set your OpenAI API key in Django settings
-# os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
-
-def get_user_db_path(user):
-    """Generate a unique path for each user's vector store."""
-    return os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}')
-
-def create_and_persist_db(user):
-    """Create and persist a Chroma vector store for a specific user."""
+def add_texte_to_db(user, texte):
+    """Add a new Texte to the user's existing Chroma database."""
     persist_directory = get_user_db_path(user)
-    os.makedirs(persist_directory, exist_ok=True)
+    
+    # Check if the database exists
+    if not os.path.exists(persist_directory):
+        # If it doesn't exist, create it
+        create_empty_db(user)
+    
+    # Prepare the document
+    doc = Document(page_content=texte.text, metadata={"title": texte.title})
 
-    # Load and process the documents
-    document_path = os.path.join(settings.BASE_DIR, 'documents', 'Bouveresse.txt')
-    loader = TextLoader(document_path, encoding='utf-8')
-    documents = loader.load()
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    texts = text_splitter.split_documents(documents)
-
-    # Create the vector store
+    # Load the existing database
     embeddings = OpenAIEmbeddings()
-    vectorstore = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory)
-    vectorstore.persist()
-    return persist_directory
+    vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
-@login_required
-@require_POST
-def create_user_db(request):
-    user = request.user
-    try:
-        db_path = create_and_persist_db(user)
-        return JsonResponse({
-            'message': f'Chroma database created successfully for user {user.username}',
-            'path': db_path
-        })
-    except Exception as e:
-        return JsonResponse({
-            'message': f'Error creating database: {str(e)}',
-        }, status=500)
+    # Add the new document
+    vectorstore.add_documents([doc])
+
+    # Persist the changes
+    vectorstore.persist()
+
 
 @login_required
 def check_user_db(request):
@@ -170,7 +164,8 @@ def check_user_db(request):
         'path': db_path if db_exists else None
     })
     
-    
+
+############# QUERY RAG #############
 @login_required
 @require_POST
 def query_rag(request):
