@@ -228,62 +228,44 @@ def check_user_db(request):
 
 
 ############# QUERY RAG #############
+
 # Load environment variables from .env file
 load_dotenv()
-
-logger = logging.getLogger(__name__)
 
 @login_required
 @require_POST
 def query_rag(request):
     user = request.user
     try:
-        # Get the OpenAI API key from environment variables
         openai_api_key = os.getenv('OPENAI_API_KEY')
         if not openai_api_key:
-            logger.error("OPENAI_API_KEY not found in environment variables")
             return JsonResponse({'error': 'OpenAI API key not configured'}, status=500)
 
         data = json.loads(request.body)
         query = data.get('query')
 
         if not query:
-            logger.warning(f"No query provided for user {user.username}")
             return JsonResponse({'error': 'No query provided'}, status=400)
 
-        logger.info(f"Processing query for user {user.username}: {query[:50]}...")
-
-        # Get the user's database path
         db_path = get_user_db_path(user)
-        logger.info(f"Database path for user {user.username}: {db_path}")
 
-        # Check if the database exists
         if not os.path.exists(db_path):
-            logger.error(f"No database found for user {user.username} at path {db_path}")
             return JsonResponse({'error': 'No database found for this user'}, status=404)
 
-        # Load the persisted database
         embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
         vectorstore = Chroma(persist_directory=db_path, embedding_function=embeddings)
-        logger.info(f"Loaded vector store for user {user.username}")
 
-        # Create the RAG chain
         qa = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key),
+            llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key),
             chain_type="stuff",
             retriever=vectorstore.as_retriever()
         )
-        logger.info(f"Created RAG chain for user {user.username}")
 
-        # Query the RAG system
         result = qa.invoke(query)
-        logger.info(f"Obtained result for user {user.username}")
 
         return JsonResponse({'result': result['result']})
 
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error for user {user.username}: {str(e)}")
+    except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
     except Exception as e:
-        logger.error(f"Error processing query for user {user.username}: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)

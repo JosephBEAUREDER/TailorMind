@@ -1,3 +1,5 @@
+{% load static %}
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -6,23 +8,14 @@
     <title>TailorMind</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{% static 'css/home.css' %}">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
     <style>
-        body { background-color: #202124; color: white; }
-        .offcanvas { background-color: #202124; color: white; }
-        .source-item { padding: 5px 0; }
-        .form-check-input:checked { background-color: #8ab4f8; border-color: #8ab4f8; }
-        .offcanvas-header .btn-close { filter: invert(1); }
-        .chat-container { max-width: 800px; margin: 0 auto; }
-        .chat-message { background-color: #303134; border-radius: 10px; padding: 15px; margin-bottom: 20px; }
-        .user-input { background-color: #303134; border: none; color: white; }
 
-        .modal-content {
-            background-color: #202124; /* Adjust the alpha value to control darkness */
-        }
     </style>
 </head>
+
 <body>
     <div class="container-fluid">
         <div class="row">
@@ -63,21 +56,7 @@
                     Sélectionner toutes les sources
                 </label>
             </div>
-            {% comment %} <div class="source-list">
-                {% for texte in user_texts %}
-                <div class="source-item">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="source{{ forloop.counter }}" checked>
-                        <label class="form-check-label" for="source{{ forloop.counter }}">
-                            <i class="bi bi-file-text"></i> {{ texte.title }}
-                        </label>
-                    </div>
-                </div>
-                {% empty %}
-                <p>No texts available.</p>
-                {% endfor %}
-            </div>
-         {% endcomment %}
+
          <div id="texteList">
             <!-- This ul will be populated dynamically -->
             <ul id="texteItems"></ul>
@@ -87,26 +66,23 @@
     </div>
 
 
-    <h3>Create Your Vector Database</h3>
-
-
-    <button id="createDbBtn">Create Database</button>
-    <p id="result"></p>
 
 
 
-    <h3>Query Your Knowledge Base</h3>
 
 
-    <div>
+
+
+
+
+    <!-- /////////////////// CHATBOX /////////////////////////// -->
+    <div id="chat-container"></div>
+    <div id="input-container">
         <input type="text" id="queryInput" placeholder="Enter your query here">
-        <button id="queryBtn">Submit Query</button>
+        <button id="queryBtn">Send</button>
     </div>
-    <div id="result" style="margin-top: 20px; white-space: pre-wrap;"></div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
-
-     <!-- Bootstrap Modal -->
+     <!-- ////////////////// WINDOW TO ADD A NEW TEXT -->
      <div class="modal fade" id="modalAddText" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true">
         <div class="modal-dialog" role="document">
             <div class="modal-content">
@@ -126,149 +102,12 @@
     </div>
 
        
-        <script>
-
-// get texts titles in sidebar
-function fetchAndDisplayTextes() {
-    fetch('/get_texte_titles/')
-        .then(response => response.json())
-        .then(data => {
-            const texteItems = document.getElementById('texteItems');
-            texteItems.innerHTML = ''; // Clear existing items
-            data.titles.forEach(title => {
-                const li = document.createElement('li');
-                li.textContent = title;
-                texteItems.appendChild(li);
-            });
-        })
-        .catch(error => console.error('Error:', error));
-    }
-
-// Initial load of Texte items
-fetchAndDisplayTextes();
+    <script src="{% static 'js/home.js' %}"></script>
 
 
-document.getElementById('addText').addEventListener('click', function() {
-    // Show Bootstrap modal
-    $('#modalAddText').modal('show');
-});
-
-// Function to show temporary alert
-function showTemporaryAlert(message, duration = 1000) {
-    const alertElement = document.createElement('div');
-    alertElement.textContent = message;
-    alertElement.style.cssText = `
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: #4CAF50;
-        color: white;
-        padding: 15px;
-        border-radius: 5px;
-        z-index: 1000;
-    `;
-    document.body.appendChild(alertElement);
-    setTimeout(() => {
-        alertElement.remove();
-    }, duration);
-}
-
-//////////////////////////////////  SAVE TEXTE IN DATABASE  //////////////////////////////////
-
-document.getElementById('saveText').addEventListener('click', function() {
-    const title = document.getElementById('newTitle').textContent;
-    const text = document.getElementById('newText').value;
-
-    fetch("/save_texte/", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": "{{ csrf_token }}"
-        },
-        body: JSON.stringify({
-            title: title,
-            text: text
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Response from server:', data);
-        if (data.success) {
-            console.log('Success message:', data.message);
-            fetchAndDisplayTextes(); // Refresh the list
-            showTemporaryAlert('Text successfully saved');
-            $('#modalAddText').modal('hide');  // Close the modal
-        } else {
-            console.log('Error message:', data.message);
-            if (data.errors) {
-                console.log('Form errors:', data.errors);
-                let errorMessage = 'Form validation failed:\n';
-                for (const [field, errors] of Object.entries(data.errors)) {
-                    errorMessage += `${field}: ${errors.join(', ')}\n`;
-                }
-                alert(errorMessage);
-            } else {
-                alert('Failed to save texte: ' + data.message);
-            }
-        }
-    })
-    .catch(error => {
-        console.error('Fetch error:', error);
-        alert('An error occurred while saving the texte.');
-    });
-});
 
 
-document.getElementById('createDbBtn').addEventListener('click', function() {
-    fetch('/create_user_db/', {
-        method: 'POST',
-        headers: {
-            'X-CSRFToken': '{{ csrf_token }}',
-        },
-    })
-    .then(response => response.json())
-    .then(data => {
-        document.getElementById('result').textContent = data.message;
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        document.getElementById('result').textContent = 'An error occurred.';
-    });
-});
-
-
-// query the database
-document.getElementById('queryBtn').addEventListener('click', function() {
-    const query = document.getElementById('queryInput').value;
-    const resultDiv = document.getElementById('result');
-    resultDiv.textContent = 'Processing query...';
-
-    fetch('/query_rag/', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': '{{ csrf_token }}',
-        },
-        body: JSON.stringify({query: query})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.error) {
-            resultDiv.textContent = 'Error: ' + data.error;
-        } else {
-            resultDiv.textContent = data.result;
-        }
-    })
-    .catch(error => {
-        console.error('Error from server :', error);
-        resultDiv.textContent = 'An error occurred while processing your query.';
-    });
-});
-
-
-            
-        </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     
 </body>
 </html>
