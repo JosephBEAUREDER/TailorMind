@@ -11,4 +11,7 @@ urlpatterns = [
     path('check_user_db/', views.check_user_db, name='check_user_db'),
     path('query_rag/', views.query_rag, name='query_rag'),
 
+    path('', views.show_texte_sidebar, name='home'),
+    path('get_texte_titles/', views.get_texte_titles, name='get_texte_titles'),
+
 ]

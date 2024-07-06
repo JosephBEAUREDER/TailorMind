@@ -7,6 +7,7 @@ from django.views.decorators.http import require_POST
 from django.conf import settings
 
 from .forms import TexteForm
+from .models import Texte
 
 import os
 import json
@@ -22,6 +23,7 @@ from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain_openai import OpenAI
 from langchain.schema import Document
+from langchain_openai import ChatOpenAI
 
 def home(request):
     return render(request,'home.html')
@@ -73,7 +75,30 @@ def logout_view(request):
         return redirect('login')  # Redirect to the login page after logout
     return render(request, 'logout.html')
 
+################################
+# HTML LAYOUT
+################################
 
+def show_texte_sidebar(request):
+    # Assuming the user is logged in
+    user_texts = Texte.objects.filter(user=request.user)
+    
+    print(f"Number of texts: {user_texts.count()}")  # Debug print
+    for text in user_texts:
+        print(f"Text title: {text.title}")  # Debug print
+    
+    context = {
+        'user_texts': user_texts,
+        # ... other context variables ...
+    }
+    
+    return render(request, 'home.html', context)
+
+def get_texte_titles(request):
+    if request.user.is_authenticated:
+        titles = list(Texte.objects.filter(user=request.user).values_list('title', flat=True))
+        return JsonResponse({'titles': titles})
+    return JsonResponse({'titles': []})
 
 ################################
 # OPEN_AI RAG
@@ -85,7 +110,7 @@ def get_user_db_path(user):
     return os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}')
 
 
-############ CREATE EMPTY DATABASE #############
+## CREATE EMPTY DATABASE 
 
 def create_empty_db(user):
     """Create an empty Chroma vector store for a specific user."""
@@ -105,9 +130,9 @@ def create_empty_db(user):
         return JsonResponse({
             'message': f'Error creating database: {str(e)}',
         }, status=500)
-    
 
-############ ADD TEXT TO DATABASE #############
+
+## ADD TEXT TO DATABASE ###
 
 @login_required
 def save_texte(request):
@@ -121,8 +146,8 @@ def save_texte(request):
             
             try:
                 # Add the new Texte to the user's ChromaDB database
-                # add_texte_to_db(request.user, texte)
-                create_and_persist_db(request.user)
+                add_texte_to_db(request.user, texte)
+                # create_and_persist_db(request.user)
                 return JsonResponse({'success': True, 'message': f'Added the text "{texte.title}" to the database'})
             except Exception as e:
                 # If there's an error adding to ChromaDB, we should handle it
@@ -135,7 +160,6 @@ def save_texte(request):
     return JsonResponse({'success': False, 'message': 'Invalid request method'}, status=405)
 
 
-
 def add_texte_to_db(user, texte):
     """Add a new Texte to the user's existing Chroma database."""
     persist_directory = get_user_db_path(user)
@@ -146,30 +170,29 @@ def add_texte_to_db(user, texte):
         create_empty_db(user)
     
     # Create a text splitter
-    text_splitter = CharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len
-    )
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
     
-    # Split the text into chunks
-    chunks = text_splitter.split_text(texte.text)
+    # Create a Document object and split it
+    document = Document(page_content=texte.text, metadata={"title": texte.title})
+    texts = text_splitter.split_documents([document])
     
-    # Create documents from chunks
-    docs = [
-        Document(page_content=chunk, metadata={"title": texte.title, "chunk_index": i})
-        for i, chunk in enumerate(chunks)
-    ]
+    # Extract the text content and metadata from the split documents
+    text_contents = [doc.page_content for doc in texts]
+    metadatas = [doc.metadata for doc in texts]
+    
+    # Add chunk index to metadata
+    for i, metadata in enumerate(metadatas):
+        metadata["chunk_index"] = i
 
     # Load the existing database
     embeddings = OpenAIEmbeddings()
     vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
-    # Add the new documents
-    vectorstore.add_documents(docs)
-
-    # Persist the changes
-    vectorstore.persist()
+    # Add the new texts
+    vectorstore.add_texts(
+        texts=text_contents,
+        metadatas=metadatas
+    )
     
     
 def create_and_persist_db(user):
@@ -201,6 +224,8 @@ def check_user_db(request):
         'path': db_path if db_exists else None
     })
     
+
+
 
 ############# QUERY RAG #############
 # Load environment variables from .env file
@@ -244,7 +269,7 @@ def query_rag(request):
 
         # Create the RAG chain
         qa = RetrievalQA.from_chain_type(
-            llm=OpenAI(openai_api_key=openai_api_key),
+        llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key),
             chain_type="stuff",
             retriever=vectorstore.as_retriever()
         )
