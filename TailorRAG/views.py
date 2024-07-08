@@ -24,6 +24,14 @@ from langchain.chains import RetrievalQA
 from langchain_openai import OpenAI
 from langchain.schema import Document
 from langchain_openai import ChatOpenAI
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
+from langchain.prompts import (
+    ChatPromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 
 def home(request):
     return render(request,'home.html')
@@ -235,6 +243,7 @@ load_dotenv()
 @login_required
 @require_POST
 def query_rag(request):
+
     user = request.user
     try:
         openai_api_key = os.getenv('OPENAI_API_KEY')
@@ -264,6 +273,62 @@ def query_rag(request):
         result = qa.invoke(query)
 
         return JsonResponse({'result': result['result']})
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+    
+
+@login_required
+@require_POST
+def reflexive_chatbot(request):
+    try:
+        # Get the OpenAI API key from environment variables
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            return JsonResponse({'error': 'OpenAI API key not configured'}, status=500)
+
+        # Parse the incoming JSON data
+        data = json.loads(request.body)
+        user_input = data.get('query')
+
+        if not user_input:
+            return JsonResponse({'error': 'No query provided'}, status=400)
+
+        # Initialize the language model
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key)
+
+        # Define the prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessagePromptTemplate.from_template(
+                "You are a helpful AI assistant with reflexive capabilities. You can analyze your own responses and thoughts."
+            ),
+            MessagesPlaceholder(variable_name="history"),
+            HumanMessagePromptTemplate.from_template("{input}")
+        ])
+
+        # Initialize the memory
+        memory = ConversationBufferMemory(return_messages=True)
+
+        # Create the conversation chain
+        conversation = ConversationChain(
+            memory=memory,
+            prompt=prompt,
+            llm=llm
+        )
+
+        # Generate the response
+        response = conversation.predict(input=user_input)
+
+        # Add a reflexive component
+        reflection = conversation.predict(input=f"Reflect on your previous response: '{response}'. How could you improve it?")
+
+        # Combine the original response and reflection
+        final_response = f"Response: {response}\n\nReflection: {reflection}"
+
+        return JsonResponse({'result': final_response})
 
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)

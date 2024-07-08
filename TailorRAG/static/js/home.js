@@ -1,4 +1,4 @@
-///////////////////////////////////// SIDEBAR ////////////////////////////////////////
+///////////////////////////////////// SIDEBAR - LEFT ////////////////////////////////////////
 
 // show texts titles in sidebar
 function showTextsSidebar() {
@@ -111,8 +111,6 @@ queryBtn.addEventListener('click', function() {
     const query = document.getElementById('queryInput').value;
     if (query) {
 
-        alert(query)
-
         addMessage(query, true);
         queryInput.value = '';
 
@@ -175,34 +173,43 @@ function getCookie(name) {
 
 
 
+///////////////////////////////////// CHATBOX-RIGHT ////////////////////////////////////////
 
 
+document.addEventListener('DOMContentLoaded', function() {
+    const chatContainerRight = document.getElementById('chat-container-right');
+    const queryInputRight = document.getElementById('queryInputRight');
+    const queryBtnRight = document.getElementById('queryBtnRight');
 
-// query the database
-// document.getElementById('queryBtn').addEventListener('click', function() {
-//     const query = document.getElementById('queryInput').value;
-//     const resultDiv = document.getElementById('result');
-//     resultDiv.textContent = 'Processing query...';
+    function addMessageRight(message, isUser) {
+        const messageElement = document.createElement('div');
+        messageElement.classList.add('message-right');
+        messageElement.classList.add(isUser ? 'user-message-right' : 'bot-message-right');
+        messageElement.textContent = message;
+        chatContainerRight.prepend(messageElement);
+    }
 
-//     fetch('/query_rag/', {
-//         method: 'POST',
-//         headers: {
-//             'Content-Type': 'application/json',
-//             'X-CSRFToken': '{{ csrf_token }}',
-//         },
-//         body: JSON.stringify({query: query})
-//     })
-//     .then(response => response.json())
-//     .then(data => {
-//         if (data.error) {
-//             resultDiv.textContent = 'Error: ' + data.error;
-//         } else {
-//             resultDiv.textContent = data.result;
-//         }
-//     })
-//     .catch(error => {
-//         console.error('Error from server :', error);
-//         resultDiv.textContent = 'An error occurred while processing your query.';
-//     });
-// });
+    queryBtnRight.addEventListener('click', function() {
+        const query = queryInputRight.value.trim();
+        if (query) {
+            addMessageRight(query, true);
+            queryInputRight.value = '';
 
+            addMessageRight('Processing query...', false);
+
+            // Here you would typically send the query to your backend
+            // For demonstration, we'll just simulate a response after a delay
+            setTimeout(() => {
+                chatContainerRight.removeChild(chatContainerRight.firstChild); // Remove 'Processing' message
+                addMessageRight('This is a simulated response to: ' + query, false);
+            }, 1000);
+        }
+    });
+
+    // Allow sending message with Enter key
+    queryInputRight.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            queryBtnRight.click();
+        }
+    });
+});
