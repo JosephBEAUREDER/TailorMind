@@ -268,6 +268,14 @@ def query_rag(request):
 
         embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
         vectorstore = Chroma(persist_directory=db_path, embedding_function=embeddings)
+        
+        # Retrieve the last 5 interactions for this user
+        last_interactions = ChatHistory.objects.filter(user=user).order_by('-timestamp')[:5]
+
+        # Create a string of previous interactions
+        previous_interactions = " "
+        for interaction in reversed(last_interactions):
+            previous_interactions += f"Human: {interaction.query}\nAI: {interaction.result}\n\n"
 
         # Define the system prompt
         system_prompt = """You are a helpful AI assistant. Your task is to provide accurate and relevant information based on the context provided. If you're unsure about something, please say so. Your answer must be as short as possible"""
@@ -275,12 +283,15 @@ def query_rag(request):
         # Create a custom prompt template
         prompt_template = """
         {context}
+        
+        Previous interactions:
+        {previous_interactions}
 
         Human: {question}
         AI: """
 
         PROMPT = PromptTemplate(
-            template=prompt_template, input_variables=["context", "question"]
+            template=prompt_template, input_variables=["context", "question", "previous_interactions"]
         )
 
         qa = RetrievalQA.from_chain_type(
@@ -292,26 +303,18 @@ def query_rag(request):
         )
 
         # Get the result and source documents
-        result = qa({"query": query})
+        result = qa({
+            "query": query,
+            })
         
-        # Retrieve the last 5 interactions for this user
-        last_interactions = ChatHistory.objects.filter(user=user).order_by('-timestamp')[:5]
-        
-        # Construct the full prompt
+        # Write the full prompt in a text file
         full_prompt = f"System: {system_prompt}\n\n"
 
         for i, doc in enumerate(result['source_documents']):
             full_prompt += f"Relevant Chunk {i+1} from {doc.metadata}:\n{doc.page_content}\n\n"
         full_prompt += f"Human: {query}\n"
         full_prompt += f"AI: {result['result']}"
-        
-        ChatHistory.objects.create(
-            user=user,
-            query=query,
-            result=result['result']
-        )
 
-        # Write the full prompt to a text file
         log_file_path = os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}', f"logs/query_log_{user.id}.txt")
 
         # Ensure the directory exists
