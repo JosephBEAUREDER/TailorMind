@@ -14,8 +14,7 @@ import json
 import logging
 
 from dotenv import load_dotenv
-
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_openai import OpenAIEmbeddings
 # from langchain.embeddings.openai import OpenAIEmbeddings
@@ -26,6 +25,9 @@ from langchain.schema import Document
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
+from langchain.prompts import PromptTemplate
+from langchain.schema import SystemMessage, HumanMessage
+
 from langchain.prompts import (
     ChatPromptTemplate,
     MessagesPlaceholder,
@@ -167,7 +169,6 @@ def save_texte(request):
     # If the request method is not POST
     return JsonResponse({'success': False, 'message': 'Invalid request method'}, status=405)
 
-
 def add_texte_to_db(user, texte):
     """Add a new Texte to the user's existing Chroma database."""
     persist_directory = get_user_db_path(user)
@@ -178,7 +179,7 @@ def add_texte_to_db(user, texte):
         create_empty_db(user)
     
     # Create a text splitter
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=50, separators=["\n"])
     
     # Create a Document object and split it
     document = Document(page_content=texte.text, metadata={"title": texte.title})
@@ -202,6 +203,11 @@ def add_texte_to_db(user, texte):
         metadatas=metadatas
     )
     
+    # Write the chunks to a text file
+    chunks_file_path = os.path.join(persist_directory, f"chunks_{texte.title}.txt")
+    with open(chunks_file_path, 'w') as chunks_file:
+        for i, chunk in enumerate(text_contents):
+            chunks_file.write(f"Chunk {i}:\n{chunk}\n\n{'-'*50}\n\n")
     
 def create_and_persist_db(user):
     """Create and persist a Chroma vector store for a specific user."""
@@ -234,16 +240,15 @@ def check_user_db(request):
     
 
 
-
 ############# QUERY RAG #############
 
 # Load environment variables from .env file
 load_dotenv()
 
+from .models import ChatHistory
 @login_required
 @require_POST
 def query_rag(request):
-
     user = request.user
     try:
         openai_api_key = os.getenv('OPENAI_API_KEY')
@@ -264,13 +269,55 @@ def query_rag(request):
         embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
         vectorstore = Chroma(persist_directory=db_path, embedding_function=embeddings)
 
+        # Define the system prompt
+        system_prompt = """You are a helpful AI assistant. Your task is to provide accurate and relevant information based on the context provided. If you're unsure about something, please say so. Your answer must be as short as possible"""
+
+        # Create a custom prompt template
+        prompt_template = """
+        {context}
+
+        Human: {question}
+        AI: """
+
+        PROMPT = PromptTemplate(
+            template=prompt_template, input_variables=["context", "question"]
+        )
+
         qa = RetrievalQA.from_chain_type(
             llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0, openai_api_key=openai_api_key),
             chain_type="stuff",
-            retriever=vectorstore.as_retriever()
+            retriever=vectorstore.as_retriever(search_kwargs={"k": 2}),
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": PROMPT}
         )
 
-        result = qa.invoke(query)
+        # Get the result and source documents
+        result = qa({"query": query})
+        
+        # Retrieve the last 5 interactions for this user
+        last_interactions = ChatHistory.objects.filter(user=user).order_by('-timestamp')[:5]
+        
+        # Construct the full prompt
+        full_prompt = f"System: {system_prompt}\n\n"
+
+        for i, doc in enumerate(result['source_documents']):
+            full_prompt += f"Relevant Chunk {i+1} from {doc.metadata}:\n{doc.page_content}\n\n"
+        full_prompt += f"Human: {query}\n"
+        full_prompt += f"AI: {result['result']}"
+        
+        ChatHistory.objects.create(
+            user=user,
+            query=query,
+            result=result['result']
+        )
+
+        # Write the full prompt to a text file
+        log_file_path = os.path.join(settings.BASE_DIR, 'user_vectorstores', f'user_{user.id}', f"logs/query_log_{user.id}.txt")
+
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+        with open(log_file_path, 'a') as log_file:
+            log_file.write(full_prompt + "\n\n" + "-"*50 + "\n\n")
 
         return JsonResponse({'result': result['result']})
 

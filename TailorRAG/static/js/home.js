@@ -1,3 +1,5 @@
+const csrfToken = "{{ csrf_token }}";
+
 ///////////////////////////////////// SIDEBAR - LEFT ////////////////////////////////////////
 
 // show texts titles in sidebar
@@ -55,7 +57,7 @@ document.getElementById('saveText').addEventListener('click', function() {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            "X-CSRFToken": "{{ csrf_token }}"
+            "X-CSRFToken": getCookie('csrftoken')
         },
         body: JSON.stringify({
             title: title,
